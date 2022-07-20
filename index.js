@@ -18,77 +18,84 @@ const testing = true;
 const tables = ['Configurations', 'Days', 'Laps', 'Runs'];
 
 // Variables
-let currentSessionData;
-let previousSessionData;
+let currentSessionId;
+let lastSessionId;
 let pollingRate = 45000
 
 // Functions
 
 async function fetchData(url) {
-	let data = await (await (fetch(url)
+	let data = await fetch
+		.get(url)
 		.then(res => {
-			return res;
+			return res.data;
 		})
 		.catch(err => {
 			console.log('Error: ', err)
 		})
-	))
-	return data
+	return data;
 }
 
-var populateDatabase = function(sessionData){
-	try {
-      mariadb.createConnection({
-			host: process.env.DB_HOST,
-			user: process.env.DB_USER,
-			password: process.env.DB_PWD,
-			database: process.env.DB_K
-		}).then(conn => {
-			conn.query(`SELECT DayID FROM Days WHERE DATE = '${sessionData.Date}'`)
-				.then(rows => {
-					if(rows.length == 1){
-						console.log(rows);
-						// Use existing day
-					}else{
-						// Create new day
-					}
+var populateDatabase = function(sessionId){
+	let sessionData = await fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/${sessionId}`);
 
-					conn.end();
-				})
-				.catch(err => {
-					res.send(err);
-				});
-		}).catch(err => { 
-			res.send(err); 
-		});
-     } catch (err) {
-       console.log("SQL error : ", err);
-     } finally {
-		if (conn){
-			conn.close(); 
-		}
-     }
+	// Try get current day [sessionData.Date]
+	// if day not found create the day
+
+	// day creation: 
+		// Title[sessionData.Date]
+		// Configuration[unknown]
+		// Date[sessionData.Date]
+		// Weather[pull weather from somewhere?]
+		// Comments[null]
+		// Week[calculate week of the year]
+
+	// when day created or found
+	// try get current session
+	// if current session found delete all session data
+
+	// when session data deleted or session not found
+	// create new session
+
+	// session creation:
+		// Day[sessionData.Date{ref}]
+		// Time[sessionData.Time]
+		// Type[determine type, or upgrade API to return type]
+		// SpeedwaySessionID[sessionId]
+
+	// when session created
+	// bulk add laps
+
+	// lap set [...] creation:
+		// Session[createdSession]
+		// LapNo[index of :sessionData.LapTimes[...].data[index]]
+		// LapTime[sessionData.LapTimes[...].data[index]]
+		// Position[sessionData.LapTimes[...].data[index]] Only if sesion type is race
+		// Kart[sessionData.LapTimes[i].label for all entries in a set]
+		// Driver[unknown]
 }
 
-if(testing){
-	let data = await fetchData('https://karts.theamazingtom.com/api/speedway/GetSessionData');
-	console.log(data);
+var init = async function (){
+	if (testing) {
+		let sessionId = await fetchData('https://karts.theamazingtom.com/api/speedway/GetCurrentSessionId');
+		console.log(sessionData.LapTimes[0].data);
+		populateDatabase(sessionId);
+	}
+
+	while (true && !testing) {
+		setTimeout(() => {
+			let res = fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/`);
+
+			if (currentSessionId.Time != res.Time) {
+				lastSessionId = currentSessionId;
+				populateDatabase(lastSessionId);
+			}
+
+			currentSessionId = res;
+		}, pollingRate);
+	}
 }
 
-while(true && !testing){
-	setTimeout(() => {
-		let res = await fetchData('https://karts.theamazingtom.com/api/speedway/GetSessionData');
-
-		if(currentSessionData.Time != res.Time){
-			previousSessionData = currentSessionData;
-			populateDatabase(previousSessionData);
-		}
-
-		currentSessionData = res;
-	}, pollingRate);	
-}
-
-
-// Async does not work
+init();
 // Need to get current URL
 // If current URL != last URL process the previous URL to the database
