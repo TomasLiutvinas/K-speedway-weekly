@@ -54,8 +54,32 @@ function getWeekNumber() {
 	return weekNo;
 }
 
+function getStringTimeForDatabase(time) {
+	//73.421997070312
+	var minutes = Math.trunc(time / 60);
+	var seconds = Math.trunc(time % 60);
+	var ms = Math.round(time % 1 * 1000);
+
+	if (Math.trunc(time / 60) < 10) {
+		minutes = "0" + minutes;
+	}
+
+	if (seconds < 10) {
+		seconds = "0" + seconds;
+	}
+
+	if (Math.round(time % 1 * 1000) < 10) {
+		ms = "00" + ms;
+	} else if (ms < 100) {
+		ms = "0" + ms;
+	}
+
+	return `00:${minutes}:${seconds}.${ms}`;
+}
+
 var populateDatabase = async function(sessionId){
 	let sessionData = await fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/${sessionId}`);
+	if(sessionData.Type == 'PRACTICE'){ sessionData.Type = 'SIMPLE'; }
 
 	const pool = mariadb.createPool({
 		host: process.env.DB_HOST,
@@ -96,7 +120,7 @@ var populateDatabase = async function(sessionId){
 		`);
 		
 		// what the fuck is this, returning {id}n instead of just the ID, HELP ME PLS
-		currentDayId = insertResult.insertId.Replace('n','');
+		currentDayId = insertResult.insertId.replace('n','');
 	}
 
 	let currentSessionId;
@@ -119,7 +143,7 @@ var populateDatabase = async function(sessionId){
 				  Time = '${sessionData.Time}:00'
 		`);
 		// if current session found delete ALL session data
-		console.log(deleteResult);
+		console.log(`Deleted: ${deleteResult}`);
 	}
 	
 	// session creation:
@@ -128,23 +152,20 @@ var populateDatabase = async function(sessionId){
 	// Type[determine type, or upgrade API to return type]
 	// SpeedwaySessionID[sessionId]
 
-	// TODO Resolve Simple/Other Types
 	let insertResult = await connection.query(`
 		INSERT INTO \`speedway\`.\`Sessions\` (\`Day\`, \`Time\`, \`Type\`, \`SpeedwaySessionID\`) 
 		VALUES (
 			 ${currentDayId},
 			'${sessionData.Time}:00',
-			'SIMPLE',
+			'${sessionData.Type}',
 			'${sessionId}'
 		);
 	`);
 
 	currentSessionId = insertResult.insertId;
-	console.log(`Created ${currentSessionId}`);	
-
+	
 	// when session created
 	// bulk add laps
-
 	// lap set [...] creation:
 		// Session[createdSession]
 		// LapNo[index of :sessionData.LapTimes[...].data[index]]
@@ -152,6 +173,40 @@ var populateDatabase = async function(sessionId){
 		// Position[sessionData.LapTimes[...].data[index]] Only if sesion type is race
 		// Kart[sessionData.LapTimes[i].label for all entries in a set]
 		// Driver[unknown]
+
+	let bulkInsertData = [];
+	let bulkInsertQuery;
+	
+	if (sessionData.Type == 'RACE') {
+		// Not supported yet
+		// bulkInsertQuery = `INSERT INTO \`speedway\`.\`Laps\` 
+		// (\`Session\`, \`LapNo\`, \`LapTime\`, \`Position\`, \`Kart\`) VALUES (?, ?, ?, ?, ?);`
+	} else if(sessionData.Type == 'SIMPLE'){
+		sessionData.LapTimes.forEach((lapTimeEntry, kartIndex) => {
+			lapTimeEntry.data.forEach((lapTime, lapIndex) => {
+				bulkInsertData.push([currentSessionId, lapIndex, getStringTimeForDatabase(lapTime), lapTimeEntry.label.replace(/\D/g, '')]);
+			})
+		});
+
+		bulkInsertQuery = `INSERT INTO \`speedway\`.\`Laps\` 
+		(\`Session\`, \`LapNo\`, \`LapTime\`, \`Kart\`) VALUES (?, ?, ?, ?);`
+	} else { 
+		console.log(`Unknown session type ${sessionData.Type}`);
+		throw 'Unknown session type';
+	}
+
+	try {
+		await connection.batch(bulkInsertQuery, bulkInsertData, (err, res, meta) => {
+			if (err) {
+				console.error("Error loading data, reverting changes: ", err);
+			} else {
+				console.log(res);  // never get called? but bulk adding works
+				console.log(meta); // never get called
+			}
+		});
+	} catch (err) {
+		console.log(`ERR:${err}`);
+	}
 
 	connection.end();
 	console.log('closed connection');
