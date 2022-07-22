@@ -184,7 +184,7 @@ var populateDatabase = async function(sessionId){
 	} else if(sessionData.Type == 'SIMPLE'){
 		sessionData.LapTimes.forEach((lapTimeEntry, kartIndex) => {
 			lapTimeEntry.data.forEach((lapTime, lapIndex) => {
-				bulkInsertData.push([currentSessionId, lapIndex, getStringTimeForDatabase(lapTime), lapTimeEntry.label.replace(/\D/g, '')]);
+				bulkInsertData.push([currentSessionId, lapIndex + 1, getStringTimeForDatabase(lapTime), lapTimeEntry.label.replace(/\D/g, '')]);
 			})
 		});
 
