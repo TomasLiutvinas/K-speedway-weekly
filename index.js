@@ -17,13 +17,8 @@ const fetch = require('axios');
 const mariadb = require('mariadb');
 
 // Constants
-const testing = true;
-const tables = ['Configurations', 'Days', 'Laps', 'Runs'];
-
-// Variables
-let currentSessionId;
-let lastSessionId;
-let pollingRate = 45000
+const testing = false;
+const pollingRate = 1000 * 60 * 1;
 
 // Functions
 
@@ -77,8 +72,8 @@ function getStringTimeForDatabase(time) {
 	return `00:${minutes}:${seconds}.${ms}`;
 }
 
-var populateDatabase = async function(sessionId){
-	let sessionData = await fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/${sessionId}`);
+var populateDatabase = async function(){
+	let sessionData = await fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/${previousSessionHash}`);
 	if(sessionData.Type == 'PRACTICE'){ sessionData.Type = 'SIMPLE'; }
 
 	const pool = mariadb.createPool({
@@ -90,15 +85,15 @@ var populateDatabase = async function(sessionId){
 
 	let connection = await pool.getConnection();
 
+	// Try get current day [sessionData.Date]
+	// if day not found create the day
+	let currentDayId;
 	const currentDay = await connection.query(`
 		SELECT DayID 
 		FROM Days
 		WHERE DATE = '${sessionData.Date}'
 	`);
-
-	let currentDayId;
-	// Try get current day [sessionData.Date]
-	// if day not found create the day
+	
 	if(currentDay.length > 0){
 		currentDayId = currentDay[0].DayID;
 	} else {
@@ -119,12 +114,15 @@ var populateDatabase = async function(sessionId){
 			);
 		`);
 		
-		// what the fuck is this, returning {id}n instead of just the ID, HELP ME PLS
-		currentDayId = insertResult.insertId.replace('n','');
+		// what the fuck is this, SOMETIMES(?) returning {id}n instead of just the ID, HELP ME PLS
+		try{
+			currentDayId = insertResult.insertId.replace('n', '');
+		} catch(err){
+			currentDayId = insertResult.insertId;
+		}
 	}
 
-	let currentSessionId;
-	let currentSession = await connection.query(`
+	let existingSessionId = await connection.query(`
 		SELECT SessionID 
 		FROM Sessions
 		WHERE Day = '${currentDayId}'
@@ -134,8 +132,7 @@ var populateDatabase = async function(sessionId){
 
 	// when day created or found
 	// try get current session
-	if(currentSession.length > 0){
-		currentSessionId = currentSession[0].SessionID;
+	if (existingSessionId.length > 0){
 		let deleteResult = await connection.query(`
 			DELETE FROM \`speedway\`.\`Sessions\`
 			WHERE Day = ${currentDayId}
@@ -143,26 +140,25 @@ var populateDatabase = async function(sessionId){
 				  Time = '${sessionData.Time}:00'
 		`);
 		// if current session found delete ALL session data
-		console.log(`Deleted: ${deleteResult}`);
 	}
 	
 	// session creation:
-	// Day[sessionData.Date{ref}]
+	// Day[reference to current day]
 	// Time[sessionData.Time]
-	// Type[determine type, or upgrade API to return type]
-	// SpeedwaySessionID[sessionId]
+	// Type[sessionData.Type]
+	// SpeedwaySessionHash[sessionToProcessHash]
 
 	let insertResult = await connection.query(`
-		INSERT INTO \`speedway\`.\`Sessions\` (\`Day\`, \`Time\`, \`Type\`, \`SpeedwaySessionID\`) 
+		INSERT INTO \`speedway\`.\`Sessions\` (\`Day\`, \`Time\`, \`Type\`, \`SpeedwaySessionHash\`) 
 		VALUES (
 			 ${currentDayId},
 			'${sessionData.Time}:00',
 			'${sessionData.Type}',
-			'${sessionId}'
+			'${previousSessionHash}'
 		);
 	`);
 
-	currentSessionId = insertResult.insertId;
+	const currentSessionId = insertResult.insertId;
 	
 	// when session created
 	// bulk add laps
@@ -196,7 +192,12 @@ var populateDatabase = async function(sessionId){
 	}
 
 	try {
+		console.log('pre-bulk');
+		console.log(previousSessionHash);
+		
 		await connection.batch(bulkInsertQuery, bulkInsertData, (err, res, meta) => {
+			console.log('post-bulk');
+			console.log(previousSessionHash);
 			if (err) {
 				console.error("Error loading data, reverting changes: ", err);
 			} else {
@@ -212,28 +213,43 @@ var populateDatabase = async function(sessionId){
 	console.log('closed connection');
 }
 
-var init = async function (){
-	if (testing) {
-		let sessionId = await fetchData('https://karts.theamazingtom.com/api/speedway/GetCurrentSessionId');
-		await populateDatabase(sessionId);
-		return "";
-	}
+var executePoll = async function(){
+	const currentSessionHash = await fetchData('https://karts.theamazingtom.com/api/speedway/GetCurrentSessionHash');
+	console.log('pre-poll');
+	console.log(currentSessionHash);
+	console.log(previousSessionHash);
+	
+	if (isFirstRun){
+		console.log('First run, setting lastSessionHash');
+		previousSessionHash = currentSessionHash;
+		console.log('first-run-update');
+		console.log(`Updated to ${currentSessionHash}`);
+		isFirstRun = false;
+	} 
+	
+	const sessionChanged = currentSessionHash != previousSessionHash;
 
-	while (true && !testing) {
-		console.log('polling');
-		setTimeout(() => {
-			let res = fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/`);
-
-			if (currentSessionId.Time != res.Time) {
-				lastSessionId = currentSessionId;
-				populateDatabase(lastSessionId);
-			}
-
-			currentSessionId = res;
-		}, pollingRate);
+	if(sessionChanged) {
+		await populateDatabase(previousSessionHash);
+		console.log('post-poll');
+		console.log(`Updating from ${previousSessionHash}`);
+		console.log(`Updating to ${currentSessionHash}`);
+		previousSessionHash = currentSessionHash;
+	} else {
+		console.log('Session unchanged');
 	}
 }
 
+var init = async function (){
+	if (testing) {
+		await populateDatabase();
+	} else { 
+		setInterval(() => executePoll(), pollingRate);	
+	}
+}
+
+let isFirstRun = true;
+let previousSessionHash;
 init();
 // Need to get current URL
 // If current URL != last URL process the previous URL to the database
