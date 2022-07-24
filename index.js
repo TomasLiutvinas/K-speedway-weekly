@@ -75,6 +75,8 @@ function getStringTimeForDatabase(time) {
 var populateDatabase = async function(){
 	let sessionData = await fetchData(`https://karts.theamazingtom.com/api/speedway/GetSessionData/${previousSessionHash}`);
 	if(sessionData.Type == 'PRACTICE'){ sessionData.Type = 'SIMPLE'; }
+	
+	console.log(`Processing session: ${sessionData.Time}`);
 
 	const pool = mariadb.createPool({
 		host: process.env.DB_HOST,
@@ -133,12 +135,14 @@ var populateDatabase = async function(){
 	// when day created or found
 	// try get current session
 	if (existingSessionId.length > 0){
-		let deleteResult = await connection.query(`
-			DELETE FROM \`speedway\`.\`Sessions\`
-			WHERE Day = ${currentDayId}
-				  AND
-				  Time = '${sessionData.Time}:00'
-		`);
+		// No longer deleting due to duplicates happening from human error
+		console.log(`Something is not right ${existingSessionId[0].SpeedwaySessionHash}`)
+		// let deleteResult = await connection.query(`
+		// 	DELETE FROM \`speedway\`.\`Sessions\`
+		// 	WHERE Day = ${currentDayId}
+		// 		  AND
+		// 		  Time = '${sessionData.Time}:00'
+		// `);
 		// if current session found delete ALL session data
 	}
 	
@@ -159,25 +163,25 @@ var populateDatabase = async function(){
 	`);
 
 	const currentSessionId = insertResult.insertId;
-	
+
 	// when session created
 	// bulk add laps
 	// lap set [...] creation:
-		// Session[createdSession]
-		// LapNo[index of :sessionData.LapTimes[...].data[index]]
-		// LapTime[sessionData.LapTimes[...].data[index]]
-		// Position[sessionData.LapTimes[...].data[index]] Only if sesion type is race
-		// Kart[sessionData.LapTimes[i].label for all entries in a set]
-		// Driver[unknown]
+	// Session[createdSession]
+	// LapNo[index of :sessionData.LapTimes[...].data[index]]
+	// LapTime[sessionData.LapTimes[...].data[index]]
+	// Position[sessionData.LapTimes[...].data[index]] Only if sesion type is race
+	// Kart[sessionData.LapTimes[i].label for all entries in a set]
+	// Driver[unknown]
 
 	let bulkInsertData = [];
 	let bulkInsertQuery;
-	
+
 	if (sessionData.Type == 'RACE') {
 		// Not supported yet
 		// bulkInsertQuery = `INSERT INTO \`speedway\`.\`Laps\` 
 		// (\`Session\`, \`LapNo\`, \`LapTime\`, \`Position\`, \`Kart\`) VALUES (?, ?, ?, ?, ?);`
-	} else if(sessionData.Type == 'SIMPLE'){
+	} else if (sessionData.Type == 'SIMPLE') {
 		sessionData.LapTimes.forEach((lapTimeEntry, kartIndex) => {
 			lapTimeEntry.data.forEach((lapTime, lapIndex) => {
 				bulkInsertData.push([currentSessionId, lapIndex + 1, getStringTimeForDatabase(lapTime), lapTimeEntry.label.replace(/\D/g, '')]);
@@ -186,7 +190,7 @@ var populateDatabase = async function(){
 
 		bulkInsertQuery = `INSERT INTO \`speedway\`.\`Laps\` 
 		(\`Session\`, \`LapNo\`, \`LapTime\`, \`Kart\`) VALUES (?, ?, ?, ?);`
-	} else { 
+	} else {
 		console.log(`Unknown session type ${sessionData.Type}`);
 		throw 'Unknown session type';
 	}
@@ -194,7 +198,7 @@ var populateDatabase = async function(){
 	try {
 		console.log('pre-bulk');
 		console.log(previousSessionHash);
-		
+
 		await connection.batch(bulkInsertQuery, bulkInsertData, (err, res, meta) => {
 			console.log('post-bulk');
 			console.log(previousSessionHash);
@@ -215,9 +219,9 @@ var populateDatabase = async function(){
 
 var executePoll = async function(){
 	const currentSessionHash = await fetchData('https://karts.theamazingtom.com/api/speedway/GetCurrentSessionHash');
-	console.log('pre-poll');
-	console.log(currentSessionHash);
-	console.log(previousSessionHash);
+	console.log('Session check:');
+	console.log(`Previous: ${previousSessionHash}`);
+	console.log(`Current-: ${currentSessionHash}`);
 	
 	if (isFirstRun){
 		console.log('First run, setting lastSessionHash');
@@ -230,13 +234,13 @@ var executePoll = async function(){
 	const sessionChanged = currentSessionHash != previousSessionHash;
 
 	if(sessionChanged) {
+		console.log('Session changed.');
 		await populateDatabase(previousSessionHash);
-		console.log('post-poll');
 		console.log(`Updating from ${previousSessionHash}`);
-		console.log(`Updating to ${currentSessionHash}`);
+		console.log(`Updating to - ${currentSessionHash}`);
 		previousSessionHash = currentSessionHash;
 	} else {
-		console.log('Session unchanged');
+		console.log('Session not changed.');
 	}
 }
 
