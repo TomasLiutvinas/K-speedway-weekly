@@ -1,3 +1,5 @@
+// Somewhere DB connection is leaked
+
 // Routing
 const express = require('express');
 const app = express();
