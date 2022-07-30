@@ -101,14 +101,15 @@ var populateDatabase = async function(){
 	if(currentDay.length > 0){
 		currentDayId = currentDay[0].DayID;
 	} else {
-		// day creation:
+		if (sessionData.Date){
+			// day creation:
 			// Title[sessionData.Date]
 			// Configuration[unknown]
 			// Date[sessionData.Date]
 			// Weather[pull weather from somewhere?]
 			// Comments[null]
 			// Week[calculate week of the year]
-		let insertResult = await connection.query(`
+			let insertResult = await connection.query(`
 			INSERT INTO \`speedway\`.\`Days\` (\`Title\`, \`Date\`, \`Weather\`, \`Week\`) 
 			VALUES (
 				'${sessionData.Date}',
@@ -117,12 +118,15 @@ var populateDatabase = async function(){
 				${getWeekNumber()}
 			);
 		`);
-		
-		// what the fuck is this, SOMETIMES(?) returning {id}n instead of just the ID, HELP ME PLS
-		try{
-			currentDayId = insertResult.insertId.replace('n', '');
-		} catch(err){
-			currentDayId = insertResult.insertId;
+
+			// what the fuck is this, SOMETIMES(?) returning {id}n instead of just the ID, HELP ME PLS
+			try {
+				currentDayId = insertResult.insertId.replace('n', '');
+			} catch (err) {
+				currentDayId = insertResult.insertId;
+			}
+		} else {
+			console.log(`Session corrupt/empty? ${previousSessionHash}`);
 		}
 	}
 
